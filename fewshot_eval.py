@@ -1,0 +1,113 @@
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+# Model configuration
+MODEL_NAME = "Qwen/Qwen2.5-0.5B-Instruct"
+CACHE_DIR = "./model_cache"
+
+# Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_NAME,
+    cache_dir=CACHE_DIR
+)
+
+# Load model with half-precision weights
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_NAME,
+    dtype=torch.float16,
+    cache_dir=CACHE_DIR
+)
+
+# Move model to NVIDIA GPU
+model = model.to("cuda")
+model.eval()
+
+print("Model device:", next(model.parameters()).device)
+print("Model dtype:", next(model.parameters()).dtype)
+
+
+
+# Eight labeled evaluation examples
+test_data = [
+    ("My Wi-Fi disconnects every few minutes.", "NETWORK"),
+    ("Office VPN cannot connect.", "NETWORK"),
+    ("I forgot my password.", "ACCOUNT"),
+    ("My account is locked.", "ACCOUNT"),
+    ("My keyboard has a broken key.", "HARDWARE"),
+    ("My laptop fan makes grinding noises.", "HARDWARE"),
+    ("Microsoft Word crashes when opened.", "SOFTWARE"),
+    ("App installation reports a missing DLL.", "SOFTWARE"),
+]
+
+correct = 0
+
+for ticket, expected in test_data:
+
+
+
+    messages = [
+    {
+        "role": "system",
+        "content": (
+            "You classify IT support tickets into exactly four categories.\n"
+            "NETWORK: Internet, Wi-Fi, VPN, and connectivity.\n"
+            "ACCOUNT: Login, passwords, and account access.\n"
+            "HARDWARE: Physical devices and their components.\n"
+            "SOFTWARE: Application errors and installation issues.\n\n"
+            "Examples:\n"
+            "Ticket: My Ethernet connection keeps dropping.\n"
+            "Answer: NETWORK\n\n"
+            "Ticket: I cannot sign in to my employee account.\n"
+            "Answer: ACCOUNT\n\n"
+            "Ticket: My monitor screen is cracked.\n"
+            "Answer: HARDWARE\n\n"
+            "Ticket: The spreadsheet application freezes.\n"
+            "Answer: SOFTWARE\n\n"
+            "Return only the category name. No explanation."
+        )
+    },
+    {
+        "role": "user",
+        "content": f"Ticket: {ticket}\nAnswer:"
+    }
+]
+
+
+
+
+    inputs = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt"
+    ).to("cuda")
+
+    with torch.inference_mode():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=15,
+            do_sample=False,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+    new_tokens = outputs[0][inputs["input_ids"].shape[-1]:]
+    prediction = tokenizer.decode(
+        new_tokens,
+        skip_special_tokens=True
+    ).strip().upper()
+
+    is_correct = prediction == expected
+
+    if is_correct:
+        correct += 1
+
+    print(f"Expected: {expected}")
+    print(f"Predicted: {prediction}")
+    print(f"Correct: {is_correct}")
+    print("-" * 35)
+
+accuracy = correct / len(test_data) * 100
+
+print(f"Correct predictions: {correct}/{len(test_data)}")
+print(f"Accuracy: {accuracy:.2f}%")
